@@ -1,0 +1,2 @@
+# protofmt
+Simple .proto formatter
