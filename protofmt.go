@@ -1,90 +1,139 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/scanner"
 )
 
-func main() {
-	var s scanner.Scanner
-	s.Init(os.Stdin)
-	s.Filename = "stdin"
-	s.Mode = scanner.ScanIdents |
+type Formatter struct {
+	scanner.Scanner
+
+	Indent string
+
+	indentLevel int
+	indented    bool
+	prevLine    string
+
+	out io.Writer
+}
+
+func NewFormatter(in io.Reader, out io.Writer) *Formatter {
+	f := &Formatter{
+		Indent: "\t",
+		out:    out,
+	}
+	f.Init(in)
+	f.Mode = scanner.ScanIdents |
 		scanner.ScanFloats |
 		scanner.ScanChars |
 		scanner.ScanStrings |
 		scanner.ScanRawStrings |
 		scanner.ScanComments
+	return f
+}
 
-	indentLevel := 0
-	indentString := "\t"
-	indent := func() {
-		fmt.Print(strings.Repeat(indentString, indentLevel))
+func (f *Formatter) print(a ...interface{}) {
+	fmt.Fprint(f.out, a...)
+}
+
+func (f *Formatter) indent() {
+	if !f.indented {
+		f.print(strings.Repeat(f.Indent, f.indentLevel))
 	}
+	f.indented = true
+}
+
+func (f *Formatter) newLine(tt string, newLines int) {
+	switch tt {
+	case "syntax", "package", "message", "import":
+		if f.prevLine != tt {
+			newLines++
+		}
+	}
+	f.print(strings.Repeat("\n", newLines))
+	f.prevLine = tt
+	f.indented = false
+}
+
+func (f *Formatter) space(tok, prevTok rune) {
+	switch tok {
+
+	case '{', '[', '=', scanner.String, scanner.Int:
+		break
+
+	case scanner.Ident:
+		switch prevTok {
+		case '(', '.':
+			return
+		default:
+			break
+		}
+
+	default:
+		return
+	}
+	f.print(" ")
+}
+
+func (f *Formatter) Format() {
+	prevTok := rune(0)
+	f.prevLine = "syntax"
 
 	newLines := 0
-	prevTok := 0
-	prevLine := "syntax"
-
-	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
-		tt := s.TokenText()
+	for tok := f.Scan(); tok != scanner.EOF; tok = f.Scan() {
+		tt := f.TokenText()
 
 		if newLines > 0 {
-			switch tt {
-			case "syntax", "package", "message", "import":
-				if prevLine != tt {
-					newLines++
-				}
-			}
-			prevLine = tt
-
-			fmt.Print(strings.Repeat("\n", newLines))
-			indent()
+			f.newLine(tt, newLines)
 			newLines = 0
-		} else {
-			space := false
-			switch prevTok {
-			case scanner.Ident:
-				switch tok {
-				case '.', ')', ']', ',', ';':
-				default:
-					space = true
-				}
-			case scanner.Int, '=', ')', ',':
-				space = true
-			}
-			if space {
-				fmt.Print(" ")
-			}
+		}
+
+		if f.indented {
+			f.space(tok, prevTok)
 		}
 
 		switch tt {
 		case ";":
-			fmt.Print(tt)
+			f.print(tt)
 			newLines = 1
 
 		case "{":
-			fmt.Print(tt)
-			indentLevel++
+			f.print(tt)
+			f.indentLevel++
 			newLines = 1
 
 		case "}":
-			indentLevel--
-			fmt.Print(tt)
+			f.indentLevel--
+			f.indent()
+			f.print(tt)
 			newLines = 1
 
 		default:
-			fmt.Print(tt)
-			//fmt.Printf("[%d]", tok)
+			f.indent()
+			f.print(tt)
 		}
 
 		if tok == scanner.Comment {
 			newLines = 1
 		}
 
-		prevTok = int(tok)
+		prevTok = tok
 	}
 
+}
+
+func formatString(in string) string {
+	var out bytes.Buffer
+	f := NewFormatter(strings.NewReader(in), &out)
+	f.Format()
+	return out.String()
+}
+
+func main() {
+	f := NewFormatter(os.Stdin, os.Stdout)
+	f.Format()
 }
